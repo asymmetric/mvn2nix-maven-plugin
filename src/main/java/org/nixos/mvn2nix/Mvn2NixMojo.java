@@ -196,11 +196,23 @@ public class Mvn2NixMojo extends AbstractMojo
             artifacts.add(artifact);
         }
 
+        // If this is the last project, we should write the manifest.
         if (project == projects.get(projects.size() - 1)) {
-            // This is the last project, so we should write the manifest.
+            // Get the top-level project.
+            project = projects.get(0);
+
             try (FileOutputStream output = new FileOutputStream(outputFile)) {
                 JsonGenerator generator = Json.createGenerator(output);
-                generator.writeStartArray();
+
+                generator
+                    .writeStartObject()
+                        .writeStartObject("project")
+                            .write("groupId", project.getGroupId())
+                            .write("artifactId", project.getArtifactId())
+                            .write("version", project.getVersion())
+                        .writeEnd()
+                        .writeStartArray("dependencies");
+
                 for (Artifact artifact: artifacts) {
                     getLog()
                         .info("artifact " + getCoordinates(artifact));
@@ -208,14 +220,19 @@ public class Mvn2NixMojo extends AbstractMojo
 
                     generator
                         .writeStartObject()
-                        .write("groupId", artifact.getGroupId())
-                        .write("artifactId", artifact.getArtifactId())
-                        .write("version", artifact.getVersion())
-                        .write("url", info.url)
-                        .write("sha1", info.hash)
+                            .write("groupId", artifact.getGroupId())
+                            .write("artifactId", artifact.getArtifactId())
+                            .write("version", artifact.getVersion())
+                            .write("url", info.url)
+                            .write("sha1", info.hash)
                         .writeEnd();
                 }
-                generator.writeEnd();
+
+                generator
+                        // Close the array.
+                        .writeEnd()
+                    // Close the main object.
+                    .writeEnd();
                 generator.close();
             } catch (FileNotFoundException e) {
                 throw new MojoExecutionException("Writing " + outputFile, e);
