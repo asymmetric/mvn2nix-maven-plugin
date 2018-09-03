@@ -55,6 +55,7 @@ import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.repository.ArtifactRepository;
 import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.repository.WorkspaceReader;
 import org.eclipse.aether.repository.WorkspaceRepository;
 import org.eclipse.aether.resolution.ArtifactDescriptorException;
 import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
@@ -66,7 +67,9 @@ import org.eclipse.aether.spi.connector.transport.Transporter;
 import org.eclipse.aether.spi.connector.transport.TransporterProvider;
 import org.eclipse.aether.transfer.NoRepositoryLayoutException;
 import org.eclipse.aether.transfer.NoTransporterException;
-
+import org.eclipse.aether.repository.LocalRepositoryManager;
+import org.eclipse.aether.repository.LocalArtifactResult;
+import org.eclipse.aether.repository.LocalArtifactRequest;
 
 /**
  * A Mojo to generate an artifact list for Nix to create a Maven repository.
@@ -94,6 +97,9 @@ public class Mvn2NixMojo extends AbstractMojo
     @Parameter(defaultValue="manifest.json", readonly=true)
     private String outputFile;
 
+    @Parameter(defaultValue="${repositorySystemSession}", readonly=true)
+    private RepositorySystemSession repoSession;
+
     @Component
     private RepositorySystem repoSystem;
 
@@ -108,11 +114,10 @@ public class Mvn2NixMojo extends AbstractMojo
 
     static private Set<Artifact> artifacts = new HashSet<Artifact>();
 
-    private ArtifactDownloadInfo getArtifactDownloadInfo(Artifact artifact)
+    private ArtifactDownloadInfo getArtifactDownloadInfo(Artifact artifact, RepositorySystemSession repoSession)
         throws MojoExecutionException
     {
         ArtifactDownloadInfo info = new ArtifactDownloadInfo();
-        RepositorySystemSession repoSession = session.getRepositorySession();
 
         // Convert between the new API and aether's
         DefaultArtifact defaultArtifact = new DefaultArtifact(getCoordinates(artifact));
@@ -187,12 +192,38 @@ public class Mvn2NixMojo extends AbstractMojo
     public void execute()
         throws MojoExecutionException
     {
+        WorkspaceReader reader = repoSession.getWorkspaceReader();
+        LocalRepositoryManager manager = repoSession.getLocalRepositoryManager();
+
         // Collect all artifacts from this project.
         for (Artifact artifact: project.getArtifacts()) {
+            DefaultArtifact defaultArtifact = new DefaultArtifact(getCoordinates(artifact));
+
+            // Skip workspace artifacts.
+            if (reader != null && reader.findArtifact(defaultArtifact) != null) {
+                continue;
+            }
+
+            // Skip local artifacts.
+            LocalArtifactRequest request = new LocalArtifactRequest(defaultArtifact, null, null);
+            LocalArtifactResult result = manager.find(repoSession, request);
+
+            if (result.getFile() != null) {
+                getLog().warn(String.format("result: %s", result.getFile()));
+                continue;
+            }
+
             artifacts.add(artifact);
         }
         // Collect all plugin artifacts from this project.
         for (Artifact artifact: project.getPluginArtifacts()) {
+            DefaultArtifact defaultArtifact = new DefaultArtifact(getCoordinates(artifact));
+
+            // Skip workspace artifacts.
+            if (reader != null && reader.findArtifact(defaultArtifact) != null) {
+                continue;
+            }
+
             artifacts.add(artifact);
         }
 
@@ -204,7 +235,7 @@ public class Mvn2NixMojo extends AbstractMojo
                 for (Artifact artifact: artifacts) {
                     getLog()
                         .info("artifact " + getCoordinates(artifact));
-                    ArtifactDownloadInfo info = getArtifactDownloadInfo(artifact);
+                    ArtifactDownloadInfo info = getArtifactDownloadInfo(artifact, repoSession);
 
                     generator
                         .writeStartObject()
